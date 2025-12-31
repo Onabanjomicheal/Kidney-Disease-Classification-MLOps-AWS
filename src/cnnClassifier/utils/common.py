@@ -1,6 +1,5 @@
 #4. Update the entity
 
-
 import os
 from box.exceptions import BoxValueError
 import yaml
