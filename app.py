@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os
+import shutil
 from flask_cors import CORS, cross_origin
 from cnnClassifier.utils.common import decodeImage
 from cnnClassifier.pipeline.prediction import PredictionPipeline
@@ -11,12 +12,24 @@ os.environ['LC_ALL'] = 'en_US.UTF-8'
 app = Flask(__name__)
 CORS(app)
 
+# --- START ADJUSTMENT: Copy logic on startup ---
+source_model = os.path.join("artifacts", "training", "model.h5")
+target_dir = "model"
+target_model = os.path.join(target_dir, "model.h5")
+
+# Create the folder and copy the model immediately when app.py runs
+os.makedirs(target_dir, exist_ok=True)
+if os.path.exists(source_model):
+    shutil.copy(source_model, target_model)
+    print("--- Model successfully copied to /model folder ---")
+# --- END ADJUSTMENT ---
+
 class ClientApp:
     def __init__(self):
         self.filename = "inputImage.jpg"
         self.classifier = PredictionPipeline(self.filename)
 
-# Initialize the ClientApp globally so routes can always find it
+# Initialize the ClientApp globally
 clApp = ClientApp()
 
 @app.route("/", methods=['GET'])
@@ -28,30 +41,31 @@ def home():
 @cross_origin()
 def trainRoute():
     try:
-        # Using main.py to trigger training
+        # Run training
         os.system("python main.py")
-        return "Training done successfully!"
+        # os.system("dvc repro")
+        
+        # Sync again after training in case a newer model was created
+        if os.path.exists(source_model):
+            shutil.copy(source_model, target_model)
+            
+        return "Training and copy successful!"
     except Exception as e:
-        return f"Error during training: {str(e)}"
+        return f"Error: {str(e)}"
 
 @app.route("/predict", methods=['POST'])
 @cross_origin()
 def predictRoute():
     try:
-        # 1. Capture JSON data
         data = request.get_json()
         if data is None or 'image' not in data:
-            return jsonify({"error": "No image data found in request"}), 400
+            return jsonify({"error": "No image data found"}), 400
         
         image = data['image']
-        
-        # 2. Decode the base64 string and save as 'inputImage.jpg'
         decodeImage(image, clApp.filename)
         
-        # 3. Run prediction via the pipeline
+        # This uses the model in the /model folder created above
         result = clApp.classifier.predict()
-        
-        # 4. Return the result as JSON
         return jsonify(result)
         
     except Exception as e:
@@ -59,5 +73,4 @@ def predictRoute():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Running on 8080 for AWS/Local testing
     app.run(host='0.0.0.0', port=8080)
